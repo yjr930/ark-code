@@ -1,0 +1,19 @@
+{
+  "name": "ark-code",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "pnpm@10.17.1",
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "typecheck": "tsc -b tsconfig.json --pretty false",
+    "clean": "rm -rf .arkcode-dev apps/*/dist packages/*/dist apps/*/*.tsbuildinfo packages/*/*.tsbuildinfo",
+    "dev:run": "node --enable-source-maps apps/cli/dist/index.js",
+    "start": "pnpm run build && pnpm run dev:run",
+    "test": "pnpm run build && node --test tests/*.test.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "typescript": "^5.8.3"
+  }
+}

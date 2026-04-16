@@ -1,0 +1,9 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/bridge" },
+    { "path": "./packages/engine-core" },
+    { "path": "./packages/server-host" },
+    { "path": "./apps/cli" }
+  ]
+}
