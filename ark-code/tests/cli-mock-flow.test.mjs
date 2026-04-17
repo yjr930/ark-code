@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -25,4 +25,45 @@ test('cli mock flow creates sample file', async () => {
 
   const content = await readFile(path.join(tmpRoot, 'sample-output.txt'), 'utf8')
   assert.equal(content, 'created by mock provider\n')
+})
+
+test('cli mock flow patches existing sample file', async () => {
+  const tmpRoot = await mkdtemp(path.join(os.tmpdir(), 'ark-code-test-'))
+  const cliPath = path.join(process.cwd(), 'apps/cli/dist/index.js')
+  const sampleFile = path.join(tmpRoot, 'sample-output.txt')
+
+  await writeFile(sampleFile, 'created by mock provider\n', 'utf8')
+
+  const { stdout } = await execFileAsync('node', [cliPath, 'replace sample content'], {
+    cwd: tmpRoot,
+    env: {
+      ...process.env,
+      ARKCODE_PROVIDER_MODE: 'mock',
+    },
+  })
+
+  assert.match(stdout, /status: completed/)
+  assert.match(stdout, /patch-file: updated sample-output.txt/)
+
+  const content = await readFile(sampleFile, 'utf8')
+  assert.equal(content, 'patched by mock provider\n')
+})
+
+test('cli mock flow searches files', async () => {
+  const tmpRoot = await mkdtemp(path.join(os.tmpdir(), 'ark-code-test-'))
+  const cliPath = path.join(process.cwd(), 'apps/cli/dist/index.js')
+  const packageFile = path.join(tmpRoot, 'package.json')
+
+  await writeFile(packageFile, '{"name":"demo-package"}\n', 'utf8')
+
+  const { stdout } = await execFileAsync('node', [cliPath, 'find package'], {
+    cwd: tmpRoot,
+    env: {
+      ...process.env,
+      ARKCODE_PROVIDER_MODE: 'mock',
+    },
+  })
+
+  assert.match(stdout, /status: completed/)
+  assert.match(stdout, /search-files: package.json/)
 })
