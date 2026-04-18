@@ -4,12 +4,10 @@
 
 本文记录 Ark Code `engine-core/context` 与 OpenCC 对应实现的当前对齐状态。
 
-本文只回答两个问题：
+本文记录两类状态：
 
-- 当前有哪些函数已经实现
-- 每个函数与 OpenCC 对应逻辑的对齐程度是什么
-
-本文不再单独归纳“未对齐点”列表，完整状态以函数级对齐状态表为准。
+- 当前有哪些函数已经实现，以及每个函数与 OpenCC 对应逻辑的对齐程度
+- 当前仍阻止 `context` 模块达到严格一致的关键问题
 
 本文用于持续追踪，不代表设计完成，也不代表实现已经严格对齐。
 
@@ -51,20 +49,47 @@
 | `getDoingTasksSection()` | `constants/prompts.ts:getSimpleDoingTasksSection()` | 严格一致 | 当前已按 OpenCC 同一 items/codeStyleSubitems/userHelpSubitems 结构、同一 `AskUserQuestion` 引用语义与同一外部反馈地址实现 |
 | `getActionsSection()` | `constants/prompts.ts:getActionsSection()` | 严格一致 | 当前已按 OpenCC 同一完整正文实现 |
 | `getTaskToolName()` | `constants/prompts.ts:269` 附近 task tool 选择逻辑 | 严格一致 | 当前已按 OpenCC 同一固定候选顺序 `TaskCreate -> TodoWrite` 选择 task tool |
-| `getUsingYourToolsSection()` | `constants/prompts.ts:getUsingYourToolsSection()` | 部分对齐 | 当前已补上与 OpenCC 同结构的 REPL 分支与 embedded-search 分支，并已接入 Ark host state 的真实运行态字段；但工具名常量与 OpenCC 常量源仍未完全统一，且分支能力来源仍是 Ark 自己的宿主状态而非 OpenCC 原始实现 |
-| `getToneAndStyleSection()` | `constants/prompts.ts:getSimpleToneAndStyleSection()` | 未对齐 | 当前只是极简版 |
-| `getOutputEfficiencySection()` | `constants/prompts.ts:getOutputEfficiencySection()` | 部分对齐 | 核心方向一致，但不是 OpenCC 完整文案 |
-| `getEnvInfoSection()` | `constants/prompts.ts:computeSimpleEnvInfo()` | 部分对齐 | 已有 cwd/platform/os/model，但缺 shell、git repo、additional directories 等 |
-| `getMcpInstructionsSection()` | `constants/prompts.ts:getMcpInstructions()` | 部分对齐 | 当前只列 server name，没有 per-server instructions block |
-| `getSessionSpecificGuidanceSection()` | `constants/prompts.ts:getSessionSpecificGuidanceSection()` | 部分对齐 | 当前只保留少量 guidance，缺 AskUser/Agent/Skills 等条件逻辑 |
-| `getDefaultSystemPromptSections()` | `constants/prompts.ts:getSystemPrompt()` | 部分对齐 | 已是多 section 组装，但 section 集合与条件分支远少于 OpenCC |
-| `buildDefaultSystemPrompt()` | `constants/prompts.ts:getSystemPrompt()` | 未对齐 | 只是把当前 Ark sections flatten，不是 OpenCC 等价结果 |
-| `buildEffectiveSystemPrompt()` | `utils/systemPrompt.ts:buildEffectiveSystemPrompt()` | 部分对齐 | 已支持 `override -> agent -> custom -> default -> append` 主骨架，但缺 coordinator/proactive 等分支 |
+| `getUsingYourToolsSection()` | `constants/prompts.ts:getUsingYourToolsSection()` | 严格一致 | 当前已按 OpenCC 同一分支结构实现：taskToolName 选择、REPL 分支、embedded-search 分支、providedToolSubitems/items 拼装及文案均与对应逻辑一致 |
+| `getToneAndStyleSection()` | `constants/prompts.ts:getSimpleToneAndStyleSection()` | 严格一致 | 当前已按 OpenCC 同一 items 列表与 `prependBullets()` 拼装方式实现 |
+| `getOutputEfficiencySection()` | `constants/prompts.ts:getOutputEfficiencySection()` | 严格一致 | 当前已按 OpenCC 同一 `USER_TYPE === 'ant'` 分支与非-ant 分支正文实现 |
+| `getEnvInfoSection()` | `constants/prompts.ts:computeSimpleEnvInfo()` | 严格一致 | 当前已按 OpenCC 对齐 cwd、git repo、additional working directories、worktree 分支、undercover 抑制分支、model canonical / marketing name 解析、knowledge cutoff、最新模型家族 / Claude Code 可用形态 / fast mode 文案与输出结构 |
+| `getMcpInstructionsSection()` | `constants/prompts.ts:getMcpInstructions()` | 严格一致 | 当前已按 OpenCC 对齐 connected 过滤、instructions 过滤、per-server instruction block 结构、空结果返回 null 与最终文案 |
+| `getSessionSpecificGuidanceSection()` | `constants/prompts.ts:getSessionSpecificGuidanceSection()` | 严格一致 | 当前已按 OpenCC 对齐 AskUser / interactive session / Agent / Explore / Skill / DiscoverSkills / verification 条件分支、空结果返回 null 与同结构拼装；Ark 运行时输入已收敛到 host state |
+| `getDefaultSystemPromptSections()` | `constants/prompts.ts:getSystemPrompt()` | 部分对齐 | 当前已对齐主组装结构与大部分 section，但 proactive/brief/mcp delta 等分支的真实来源仍是 Ark 侧承载位；新增 section registry 仅具备最小结构，尚未具备 OpenCC 的 cache 语义 |
+| `buildDefaultSystemPrompt()` | `constants/prompts.ts:getSystemPrompt()` | 部分对齐 | 当前只是将 `getDefaultSystemPromptSections()` 的结果转换为 `SystemPrompt`；由于上游 section 组装仍未完全达到严格一致，本函数不能单独判定为严格一致 |
+| `buildEffectiveSystemPrompt()` | `utils/systemPrompt.ts:buildEffectiveSystemPrompt()` | 部分对齐 | 当前已对齐主要优先级骨架，但 agent/coordinator/proactive 的真实来源仍是 Ark 侧简化输入；built-in agent `getSystemPrompt(...)`、memory 埋点与 coordinator/proactive 真源尚未对齐 |
 | `appendSystemContext()` | `utils/api.ts:appendSystemContext()` | 严格一致 | 输入、拼装方式、输出语义与 OpenCC 对应逻辑一致 |
 | `renderSystemPrompt()` | 无直接同名函数 | 无直接对应 | Ark Code 自己的 model port 适配辅助函数 |
 | `mergePromptSections()` | 无直接同名函数 | 无直接对应 | Ark Code 辅助函数 |
 | `applyCustomSystemPrompt()` | `utils/systemPrompt.ts` 内部逻辑的一部分 | 部分对齐 | 语义方向一致，但不是 OpenCC 一一对应函数 |
 | `applyAppendSystemPrompt()` | `utils/systemPrompt.ts` 内部逻辑的一部分 | 部分对齐 | 语义方向一致，但不是 OpenCC 一一对应函数 |
+
+## 3.1.1 prompt-builder.ts 当前问题追踪
+
+### A. `getDefaultSystemPromptSections()` 仍未严格一致的原因
+
+1. `simple mode`、`proactive`、`brief`、`mcp instructions delta` 等分支已经有结构承载，但真实来源仍未对齐到 OpenCC 对应子系统。
+2. 新增的 `system-prompt-sections.ts` 目前只对齐了 API 形状，没有对齐 OpenCC 的 section cache / clear 语义。
+3. `language`、`outputStyle`、`antModelOverride`、`scratchpadPath`、`functionResultClearingKeepRecent`、`proactiveSection`、`briefProactiveSection` 等输入当前主要来自 Ark 侧 host state 承载位，不是 OpenCC 对应 runtime 的真实来源。
+
+### B. `buildDefaultSystemPrompt()` 仍未严格一致的原因
+
+1. 本函数本身逻辑很薄，当前只是把 section 结果转换为 `SystemPrompt`。
+2. 由于上游 `getDefaultSystemPromptSections()` 仍未达到严格一致，本函数不能单独判定为严格一致。
+
+### C. `buildEffectiveSystemPrompt()` 仍未严格一致的原因
+
+1. `proactiveEnabled` 当前存在双真源：默认 prompt 组装读取 `hostState.promptFeatures.proactiveEnabled`，effective prompt 组合读取 `config.effectivePromptContext?.features?.proactiveEnabled`。
+2. `mainThreadAgentDefinition` 当前只承载 `systemPrompt?: string`，尚未对齐 OpenCC 中 built-in agent / custom agent 两类 `getSystemPrompt(...)` 获取方式。
+3. OpenCC 的 agent memory loaded 埋点、coordinator mode 真实来源与 proactive 真正生效条件仍未对齐。
+4. `customSystemPrompt + agentSystemPrompt + proactive` 组合下的优先级矩阵尚未通过真实来源闭环验证。
+
+### D. prompt-builder 额外新增函数与结构性问题
+
+1. `system-prompt-sections.ts` 当前只有最小 section registry 结构，`cacheBreak` 与 `name` 元数据尚未被用于真实缓存语义。
+2. `prompt-builder.ts` 为承载 OpenCC 分支补入了多组 helper，这些 helper 当前有一部分只是 Ark 侧桥接函数，不应误判为已经完全等价于 OpenCC 对应模块。
+3. `loadPromptMemory()` 当前同时参与 system prompt 与 user context 注入，存在重复注入风险，需要在后续对齐中确认唯一注入路径。
+4. `replModeEnabled`、MCP client ownership、promptFeatures 若继续扩展，必须收敛单一真源，避免 prompt 组装与运行时状态再次分裂。
 
 ## 3.2 context-assembly.ts
 

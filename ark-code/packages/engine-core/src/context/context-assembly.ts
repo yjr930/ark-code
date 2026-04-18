@@ -71,6 +71,11 @@ export async function assembleTurnContext(
     defaultSystemPrompt,
     customSystemPrompt: config.customSystemPrompt,
     appendSystemPrompt: config.appendSystemPrompt,
+    mainThreadAgentDefinition: config.effectivePromptContext?.mainThreadAgentDefinition,
+    coordinatorSystemPrompt: config.effectivePromptContext?.coordinator?.systemPrompt,
+    coordinatorModeEnabled:
+      config.effectivePromptContext?.features?.coordinatorModeEnabled,
+    proactiveEnabled: config.effectivePromptContext?.features?.proactiveEnabled,
   })
 
   const fullSystemPrompt = appendSystemContext(systemPrompt, systemContext)

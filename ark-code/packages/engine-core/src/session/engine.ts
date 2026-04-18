@@ -24,7 +24,9 @@ export class EngineSessionImpl implements EngineSession {
       type: 'system_init',
       sessionId: this.id,
       model: turnContext.model,
-      toolNames: ['MockProviderIntentTool'],
+      toolNames: Array.from(
+        this.config.ports.hostStatePort.getAppState().tools.enabledToolNames,
+      ),
     }
 
     const turn = runTurn(this.config, this.state, input, options?.isMeta)

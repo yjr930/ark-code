@@ -7,6 +7,8 @@ async function main(): Promise<void> {
   const workingDirectory = rootDir
   const configuredHomeDir = process.env.ARKCODE_HOME
   const providerMode = process.env.ARKCODE_PROVIDER_MODE === 'live' ? 'live' : 'mock'
+  const mainLoopModel = process.env.ARKCODE_MAIN_LOOP_MODEL
+  const modelProvider = process.env.ARKCODE_MODEL_PROVIDER === 'foundry' ? 'foundry' : 'firstParty'
   const userMessage = process.argv.slice(2).join(' ').trim() || 'hello from ark-code'
 
   const workspaceLayout = await ensureWorkspaceLayout(rootDir, configuredHomeDir)
@@ -18,6 +20,8 @@ async function main(): Promise<void> {
     runId,
     userMessage,
     workingDirectory,
+    mainLoopModel,
+    modelProvider,
     providerMode,
     workspaceLayout,
   })

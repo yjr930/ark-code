@@ -1,8 +1,41 @@
-import os from 'node:os'
 import process from 'node:process'
 import type { EngineSessionConfig } from '../types/public.js'
+import {
+  getAdditionalWorkingDirectories,
+  getClaudeCodeAvailabilityLine,
+  getFastModeLine,
+  getIsGit,
+  getKnowledgeCutoff,
+  getLatestModelFamilyLine,
+  getMarketingNameForModel,
+  getShellInfoLine,
+  getUnameSR,
+  isWorktreeSession,
+  shouldSuppressModelDetailsForUndercover,
+} from './env-info.js'
+import { hasEmbeddedSearchTools } from '../runtime/tools/embedded-search.js'
 import { getBuiltinTools, getToolSchemas } from '../runtime/tools/registry.js'
+import { isReplModeEnabled } from '../runtime/tools/repl-mode.js'
+import {
+  AGENT_TOOL_NAME,
+  ASK_USER_QUESTION_TOOL_NAME,
+  BASH_TOOL_NAME,
+  FILE_EDIT_TOOL_NAME,
+  FILE_READ_TOOL_NAME,
+  FILE_WRITE_TOOL_NAME,
+  GLOB_TOOL_NAME,
+  GREP_TOOL_NAME,
+  SKILL_TOOL_NAME,
+  TASK_CREATE_TOOL_NAME,
+  TODO_WRITE_TOOL_NAME,
+} from '../runtime/tools/tool-names.js'
 import { loadPromptMemory } from './memory.js'
+import { listSkillsForSession } from '../runtime/skills/discovery.js'
+import {
+  DANGEROUS_uncachedSystemPromptSection,
+  resolveSystemPromptSections,
+  systemPromptSection,
+} from './system-prompt-sections.js'
 
 export type SystemPrompt = readonly string[] & {
   readonly __brand: 'SystemPrompt'
@@ -13,14 +46,361 @@ export function asSystemPrompt(value: readonly string[]): SystemPrompt {
 }
 
 const CYBER_RISK_INSTRUCTION = `IMPORTANT: Assist with authorized security testing, defensive security, CTF challenges, and educational contexts. Refuse requests for destructive techniques, DoS attacks, mass targeting, supply chain compromise, or detection evasion for malicious purposes. Dual-use security tools (C2 frameworks, credential testing, exploit development) require clear authorization context: pentesting engagements, CTF competitions, security research, or defensive use cases.`
-const TASK_CREATE_TOOL_NAME = 'TaskCreate'
-const TODO_WRITE_TOOL_NAME = 'TodoWrite'
-const FILE_READ_TOOL_NAME = 'Read'
-const FILE_EDIT_TOOL_NAME = 'Edit'
-const FILE_WRITE_TOOL_NAME = 'Write'
-const GLOB_TOOL_NAME = 'Glob'
-const GREP_TOOL_NAME = 'Grep'
-const BASH_TOOL_NAME = 'Bash'
+
+export const SYSTEM_PROMPT_DYNAMIC_BOUNDARY =
+  '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__'
+
+const SUMMARIZE_TOOL_RESULTS_SECTION = `When working with tool results, write down any important information you might need later in your response, as the original tool result may be cleared later.`
+
+function getLanguageSection(languagePreference: string | undefined): string | null {
+  if (!languagePreference) return null
+
+  return `# Language
+Always respond in ${languagePreference}. Use ${languagePreference} for all explanations, comments, and communications with the user. Technical terms and code identifiers should remain in their original form.`
+}
+
+function getOutputStyleSection(
+  outputStyle:
+    | {
+        name: string
+        prompt: string
+        keepCodingInstructions?: boolean
+      }
+    | null
+    | undefined,
+): string | null {
+  if (!outputStyle) return null
+
+  return `# Output Style: ${outputStyle.name}
+${outputStyle.prompt}`
+}
+
+function getAntModelOverrideSection(config: EngineSessionConfig): string | null {
+  const appState = config.ports.hostStatePort.getAppState()
+  if (process.env.USER_TYPE !== 'ant') return null
+  if (shouldSuppressModelDetailsForUndercover(appState.repo.repoClass)) return null
+  return appState.promptFeatures.antModelOverride ?? null
+}
+
+function getScratchpadInstructions(config: EngineSessionConfig): string | null {
+  const appState = config.ports.hostStatePort.getAppState()
+  if (!appState.promptFeatures.scratchpadEnabled) {
+    return null
+  }
+
+  const scratchpadDir = appState.promptFeatures.scratchpadPath
+  if (!scratchpadDir) {
+    return null
+  }
+
+  return `# Scratchpad Directory
+
+IMPORTANT: Always use this scratchpad directory for temporary files instead of \`/tmp\` or other system temp directories:
+\`${scratchpadDir}\`
+
+Use this directory for ALL temporary file needs:
+- Storing intermediate results or data during multi-step tasks
+- Writing temporary scripts or configuration files
+- Saving outputs that don't belong in the user's project
+- Creating working files during analysis or processing
+- Any file that would otherwise go to \`/tmp\`
+
+Only use \`/tmp\` if the user explicitly requests it.
+
+The scratchpad directory is session-specific, isolated from the user's project, and can be used freely without permission prompts.`
+}
+
+function getFunctionResultClearingSection(config: EngineSessionConfig): string | null {
+  const keepRecent =
+    config.ports.hostStatePort.getAppState().promptFeatures
+      .functionResultClearingKeepRecent
+  if (!config.ports.hostStatePort.getAppState().promptFeatures.functionResultClearingEnabled || keepRecent === undefined) {
+    return null
+  }
+
+  return `# Function Result Clearing
+
+Old tool results will be automatically cleared from context to free up space. The ${keepRecent} most recent results are always kept.`
+}
+
+function getBriefSection(config: EngineSessionConfig): string | null {
+  const promptFeatures = config.ports.hostStatePort.getAppState().promptFeatures
+  if (!promptFeatures.briefEnabled) {
+    return null
+  }
+
+  return promptFeatures.briefProactiveSection ?? null
+}
+
+function shouldUseGlobalCacheScope(config: EngineSessionConfig): boolean {
+  return config.ports.hostStatePort.getAppState().promptFeatures.globalCacheScopeEnabled
+}
+
+function getSimpleModePrompt(config: EngineSessionConfig): string {
+  const sessionStartDate =
+    config.ports.hostStatePort.getAppState().promptFeatures.sessionStartDate ??
+    new Date().toISOString().slice(0, 10)
+  return `You are Claude Code, Anthropic's official CLI for Claude.\n\nCWD: ${config.cwd}\nDate: ${sessionStartDate}`
+}
+
+function getNumericLengthAnchorsSection(): string {
+  return 'Length limits: keep text between tool calls to ≤25 words. Keep final responses to ≤100 words unless the task requires more detail.'
+}
+
+function getTokenBudgetSection(): string {
+  return 'When the user specifies a token target (e.g., "+500k", "spend 2M tokens", "use 1B tokens"), your output token count will be shown each turn. Keep working until you approach the target — plan your work to fill it productively. The target is a hard minimum, not a suggestion. If you stop early, the system will automatically continue you.'
+}
+
+
+function getSimpleIntroSectionForDefaultSections(
+  config: EngineSessionConfig,
+): string {
+  const outputStyle = config.ports.hostStatePort.getAppState().promptFeatures.outputStyle
+  if (outputStyle !== null && outputStyle !== undefined) {
+    return `
+You are an interactive agent that helps users according to your "Output Style" below, which describes how you should respond to user queries. Use the instructions below and the tools available to you to assist the user.
+
+${CYBER_RISK_INSTRUCTION}
+IMPORTANT: You must NEVER generate or guess URLs for the user unless you are confident that the URLs are for helping the user with programming. You may use URLs provided by the user in their messages or local files.`
+  }
+  return getIntroSection(config)
+}
+
+function shouldIncludeDoingTasksSection(config: EngineSessionConfig): boolean {
+  const outputStyle = config.ports.hostStatePort.getAppState().promptFeatures.outputStyle
+  return outputStyle === null || outputStyle?.keepCodingInstructions === true
+}
+
+function getOutputStyleConfigForPrompt(config: EngineSessionConfig) {
+  return config.ports.hostStatePort.getAppState().promptFeatures.outputStyle ?? null
+}
+
+function getLanguagePreferenceForPrompt(config: EngineSessionConfig) {
+  return config.ports.hostStatePort.getAppState().promptFeatures.languagePreference
+}
+
+function getBriefEnabledForPrompt(config: EngineSessionConfig): boolean {
+  return config.ports.hostStatePort.getAppState().promptFeatures.briefEnabled
+}
+
+function getTokenBudgetEnabledForPrompt(config: EngineSessionConfig): boolean {
+  return config.ports.hostStatePort.getAppState().promptFeatures.tokenBudgetEnabled
+}
+
+function getNumericLengthAnchorsEnabledForPrompt(
+  config: EngineSessionConfig,
+): boolean {
+  return (
+    process.env.USER_TYPE === 'ant' &&
+    config.ports.hostStatePort.getAppState().promptFeatures
+      .numericLengthAnchorsEnabled
+  )
+}
+
+function getMcpInstructionsEnabledForPrompt(config: EngineSessionConfig): boolean {
+  return !config.ports.hostStatePort.getAppState().promptFeatures.mcpInstructionsDeltaEnabled
+}
+
+function getSystemRemindersSection(): string {
+  return `- Tool results and user messages may include <system-reminder> tags. <system-reminder> tags contain useful information and reminders. They are automatically added by the system, and bear no direct relation to the specific tool results or user messages in which they appear.
+- The conversation has unlimited context through automatic summarization.`
+}
+
+function getProactivePromptSections(
+  config: EngineSessionConfig,
+  options: {
+    memorySection: string | null
+    envInfo: string
+    mcpInstructions: string | null
+  },
+): string[] | null {
+  const promptFeatures = config.ports.hostStatePort.getAppState().promptFeatures
+  if (!promptFeatures.proactiveEnabled) {
+    return null
+  }
+
+  return [
+    `\nYou are an autonomous agent. Use the available tools to do useful work.\n\n${CYBER_RISK_INSTRUCTION}`,
+    getSystemRemindersSection(),
+    options.memorySection,
+    options.envInfo,
+    getLanguageSection(getLanguagePreferenceForPrompt(config)),
+    getMcpInstructionsEnabledForPrompt(config) ? options.mcpInstructions : null,
+    getScratchpadInstructions(config),
+    getFunctionResultClearingSection(config),
+    SUMMARIZE_TOOL_RESULTS_SECTION,
+    promptFeatures.proactiveSection ?? null,
+  ].filter((section): section is string => section !== null)
+}
+
+function isSimpleModeEnabled(config: EngineSessionConfig): boolean {
+  return config.ports.hostStatePort.getAppState().promptFeatures.simpleModeEnabled
+}
+
+function getDynamicSectionsForDefaultPrompt(options: {
+  config: EngineSessionConfig
+  enabledTools: Set<string>
+  skillToolCommands: ReturnType<typeof listSkillsForSession>
+  envInfo: string
+  memorySection: string | null
+  mcpInstructions: string | null
+}) {
+  const { config, enabledTools, skillToolCommands, envInfo, memorySection, mcpInstructions } = options
+  return [
+    systemPromptSection('session_guidance', () =>
+      getSessionSpecificGuidanceSection(config, enabledTools, skillToolCommands),
+    ),
+    systemPromptSection('memory', () => memorySection),
+    systemPromptSection('ant_model_override', () =>
+      getAntModelOverrideSection(config),
+    ),
+    systemPromptSection('env_info_simple', () => envInfo),
+    systemPromptSection('language', () =>
+      getLanguageSection(getLanguagePreferenceForPrompt(config)),
+    ),
+    systemPromptSection('output_style', () =>
+      getOutputStyleSection(getOutputStyleConfigForPrompt(config)),
+    ),
+    DANGEROUS_uncachedSystemPromptSection(
+      'mcp_instructions',
+      () =>
+        getMcpInstructionsEnabledForPrompt(config) ? mcpInstructions : null,
+      'MCP servers connect/disconnect between turns',
+    ),
+    systemPromptSection('scratchpad', () => getScratchpadInstructions(config)),
+    systemPromptSection('frc', () => getFunctionResultClearingSection(config)),
+    systemPromptSection('summarize_tool_results', () => SUMMARIZE_TOOL_RESULTS_SECTION),
+    ...(getNumericLengthAnchorsEnabledForPrompt(config)
+      ? [
+          systemPromptSection('numeric_length_anchors', () =>
+            getNumericLengthAnchorsSection(),
+          ),
+        ]
+      : []),
+    ...(getTokenBudgetEnabledForPrompt(config)
+      ? [systemPromptSection('token_budget', () => getTokenBudgetSection())]
+      : []),
+    ...(getBriefEnabledForPrompt(config)
+      ? [systemPromptSection('brief', () => getBriefSection(config))]
+      : []),
+  ]
+}
+
+function getStaticSectionsForDefaultPrompt(
+  config: EngineSessionConfig,
+  enabledTools: Set<string>,
+): Array<string | null> {
+  return [
+    getSimpleIntroSectionForDefaultSections(config),
+    getSystemSection(),
+    shouldIncludeDoingTasksSection(config) ? getDoingTasksSection() : null,
+    getActionsSection(),
+    getUsingYourToolsSection(config, enabledTools),
+    getToneAndStyleSection(),
+    getOutputEfficiencySection(),
+    ...(shouldUseGlobalCacheScope(config)
+      ? [SYSTEM_PROMPT_DYNAMIC_BOUNDARY]
+      : []),
+  ]
+}
+
+function getDefaultSystemPromptSectionOrder(
+  staticSections: Array<string | null>,
+  dynamicSections: string[],
+): string[] {
+  return [...staticSections, ...dynamicSections].filter(
+    (section): section is string => section !== null,
+  )
+}
+
+function getSystemPromptSectionRecord(sections: string[]): Record<string, string> {
+  return Object.fromEntries(sections.map((section, index) => [`section_${index}`, section]))
+}
+
+async function getDefaultSectionStrings(options: {
+  config: EngineSessionConfig
+  enabledTools: Set<string>
+  skillToolCommands: ReturnType<typeof listSkillsForSession>
+  envInfo: string
+  memorySection: string | null
+  mcpInstructions: string | null
+}): Promise<string[]> {
+  const staticSections = getStaticSectionsForDefaultPrompt(
+    options.config,
+    options.enabledTools,
+  )
+  const dynamicSections = await resolveSystemPromptSections(
+    getDynamicSectionsForDefaultPrompt(options),
+  )
+  return getDefaultSystemPromptSectionOrder(staticSections, dynamicSections.filter((section): section is string => section !== null))
+}
+
+function getSimpleModeSections(config: EngineSessionConfig): Record<string, string> {
+  return { section_0: getSimpleModePrompt(config) }
+}
+
+function getEnabledToolsForDefaultPrompt(config: EngineSessionConfig): Set<string> {
+  const builtinTools = getToolSchemas(getBuiltinTools())
+  const hostState = config.ports.hostStatePort.getAppState()
+  return new Set([
+    ...builtinTools,
+    ...hostState.tools.enabledToolNames,
+  ])
+}
+
+function getInitialSimpleSections(
+  config: EngineSessionConfig,
+): Record<string, string> | null {
+  if (isSimpleModeEnabled(config)) {
+    return getSimpleModeSections(config)
+  }
+  return null
+}
+
+async function getSectionRecordForPrompt(
+  config: EngineSessionConfig,
+): Promise<Record<string, string>> {
+  const simpleSections = getInitialSimpleSections(config)
+  if (simpleSections) {
+    return simpleSections
+  }
+
+  const enabledTools = getEnabledToolsForDefaultPrompt(config)
+  const skillToolCommands = listSkillsForSession(
+    config.ports.hostStatePort.getAppState().skills.commands,
+  )
+  const [memorySection, envInfo] = await Promise.all([
+    loadPromptMemory(),
+    getEnvInfoSection(config),
+  ])
+  const mcpInstructions = getMcpInstructionsSection(config)
+
+  const proactiveSections = getProactivePromptSections(config, {
+    memorySection,
+    envInfo,
+    mcpInstructions,
+  })
+  if (proactiveSections) {
+    return getSystemPromptSectionRecord(proactiveSections)
+  }
+
+  return getSystemPromptSectionRecord(
+    await getDefaultSectionStrings({
+      config,
+      enabledTools,
+      skillToolCommands,
+      envInfo,
+      memorySection,
+      mcpInstructions,
+    }),
+  )
+}
+
+function getDefaultPromptFromSections(
+  sections: Record<string, string>,
+): SystemPrompt {
+  return asSystemPrompt(Object.values(sections))
+}
 
 function getIntroSection(_config: EngineSessionConfig): string {
   return `
@@ -119,36 +499,37 @@ Examples of the kind of risky actions that warrant user confirmation:
 When you encounter an obstacle, do not use destructive actions as a shortcut to simply make it go away. For instance, try to identify root causes and fix underlying issues rather than bypassing safety checks (e.g. --no-verify). If you discover unexpected state like unfamiliar files, branches, or configuration, investigate before deleting or overwriting, as it may represent the user's in-progress work. For example, typically resolve merge conflicts rather than discarding changes; similarly, if a lock file exists, investigate what process holds it rather than deleting it. In short: only take risky actions carefully, and when in doubt, ask before acting. Follow both the spirit and letter of these instructions - measure twice, cut once.`
 }
 
-function getTaskToolName(toolNames: string[]): string | null {
+function getTaskToolName(enabledTools: Set<string>): string | null {
   const taskToolCandidates = [TASK_CREATE_TOOL_NAME, TODO_WRITE_TOOL_NAME]
-  return taskToolCandidates.find(name => toolNames.includes(name)) ?? null
+  return taskToolCandidates.find(name => enabledTools.has(name)) ?? null
+}
+
+function getUsingYourToolsTaskItem(taskToolName: string | null): string | null {
+  return taskToolName
+    ? `Break down and manage your work with the ${taskToolName} tool. These tools are helpful for planning your work and helping the user track your progress. Mark each task as completed as soon as you are done with the task. Do not batch up multiple tasks before marking them as completed.`
+    : null
 }
 
 function getUsingYourToolsSection(
-  config: EngineSessionConfig,
-  toolNames: string[],
+  _config: EngineSessionConfig,
+  enabledTools: Set<string>,
 ): string {
-  const taskToolName = getTaskToolName(toolNames)
-  const hostState = config.ports.hostStatePort.getAppState()
-  const replModeEnabled = hostState.ui.replModeEnabled
-  const embeddedSearchToolsEnabled =
-    hostState.toolRuntime.embeddedSearchToolsEnabled
+  const taskToolName = getTaskToolName(enabledTools)
 
-  if (replModeEnabled) {
-    const items = [
-      taskToolName
-        ? `Break down and manage your work with the ${taskToolName} tool. These tools are helpful for planning your work and helping the user track your progress. Mark each task as completed as soon as you are done with the task. Do not batch up multiple tasks before marking them as completed.`
-        : null,
-    ].filter((item): item is string => item !== null)
+  if (isReplModeEnabled()) {
+    const items = [getUsingYourToolsTaskItem(taskToolName)].filter(
+      (item): item is string => item !== null,
+    )
     if (items.length === 0) return ''
     return [`# Using your tools`, ...prependBullets(items)].join(`\n`)
   }
 
+  const embedded = hasEmbeddedSearchTools()
   const providedToolSubitems = [
     `To read files use ${FILE_READ_TOOL_NAME} instead of cat, head, tail, or sed`,
     `To edit files use ${FILE_EDIT_TOOL_NAME} instead of sed or awk`,
     `To create files use ${FILE_WRITE_TOOL_NAME} instead of cat with heredoc or echo redirection`,
-    ...(embeddedSearchToolsEnabled
+    ...(embedded
       ? []
       : [
           `To search for files use ${GLOB_TOOL_NAME} instead of find or ls`,
@@ -160,9 +541,7 @@ function getUsingYourToolsSection(
   const items = [
     `Do NOT use the ${BASH_TOOL_NAME} to run commands when a relevant dedicated tool is provided. Using dedicated tools allows the user to better understand and review your work. This is CRITICAL to assisting the user:`,
     providedToolSubitems,
-    taskToolName
-      ? `Break down and manage your work with the ${taskToolName} tool. These tools are helpful for planning your work and helping the user track your progress. Mark each task as completed as soon as you are done with the task. Do not batch up multiple tasks before marking them as completed.`
-      : null,
+    getUsingYourToolsTaskItem(taskToolName),
     `You can call multiple tools in a single response. If you intend to call multiple tools and there are no dependencies between them, make all independent tool calls in parallel. Maximize use of parallel tool calls where possible to increase efficiency. However, if some tool calls depend on previous calls to inform dependent values, do NOT call these tools in parallel and instead call them sequentially. For instance, if one operation must complete before another starts, run these operations sequentially instead.`,
   ].filter((item): item is string | string[] => item !== null)
 
@@ -170,84 +549,241 @@ function getUsingYourToolsSection(
 }
 
 function getToneAndStyleSection(): string {
-  return [
-    '# Tone and style',
-    '- Be concise and factual.',
-    '- Reference concrete file paths when discussing code.',
-  ].join('\n')
+  const items = [
+    `Only use emojis if the user explicitly requests it. Avoid using emojis in all communication unless asked.`,
+    process.env.USER_TYPE === 'ant'
+      ? null
+      : `Your responses should be short and concise.`,
+    `When referencing specific functions or pieces of code include the pattern file_path:line_number to allow the user to easily navigate to the source code location.`,
+    `When referencing GitHub issues or pull requests, use the owner/repo#123 format (e.g. anthropics/claude-code#100) so they render as clickable links.`,
+    `Do not use a colon before tool calls. Your tool calls may not be shown directly in the output, so text like "Let me read the file:" followed by a read tool call should just be "Let me read the file." with a period.`,
+  ].filter((item): item is string => item !== null)
+
+  return [`# Tone and style`, ...prependBullets(items)].join(`\n`)
 }
 
 function getOutputEfficiencySection(): string {
-  return [
-    '# Output efficiency',
-    '- Lead with the action or answer.',
-    '- Keep explanations brief unless extra detail is required.',
-  ].join('\n')
+  if (process.env.USER_TYPE === 'ant') {
+    return `# Communicating with the user
+When sending user-facing text, you're writing for a person, not logging to a console. Assume users can't see most tool calls or thinking - only your text output. Before your first tool call, briefly state what you're about to do. While working, give short updates at key moments: when you find something load-bearing (a bug, a root cause), when changing direction, when you've made progress without an update.
+
+When making updates, assume the person has stepped away and lost the thread. They don't know codenames, abbreviations, or shorthand you created along the way, and didn't track your process. Write so they can pick back up cold: use complete, grammatically correct sentences without unexplained jargon. Expand technical terms. Err on the side of more explanation. Attend to cues about the user's level of expertise; if they seem like an expert, tilt a bit more concise, while if they seem like they're new, be more explanatory.
+
+Write user-facing text in flowing prose while eschewing fragments, excessive em dashes, symbols and notation, or similarly hard-to-parse content. Only use tables when appropriate; for example to hold short enumerable facts (file names, line numbers, pass/fail), or communicate quantitative data. Don't pack explanatory reasoning into table cells -- explain before or after. Avoid semantic backtracking: structure each sentence so a person can read it linearly, building up meaning without having to re-parse what came before.
+
+What's most important is the reader understanding your output without mental overhead or follow-ups, not how terse you are. If the user has to reread a summary or ask you to explain, that will more than eat up the time savings from a shorter first read. Match responses to the task: a simple question gets a direct answer in prose, not headers and numbered sections. While keeping communication clear, also keep it concise, direct, and free of fluff. Avoid filler or stating the obvious. Get straight to the point. Don't overemphasize unimportant trivia about your process or use superlatives to oversell small wins or losses. Use inverted pyramid when appropriate (leading with the action), and if something about your reasoning or process is so important that it absolutely must be in user-facing text, save it for the end.
+
+These user-facing text instructions do not apply to code or tool calls.`
+  }
+  return `# Output efficiency
+
+IMPORTANT: Go straight to the point. Try the simplest approach first without going in circles. Do not overdo it. Be extra concise.
+
+Keep your text output brief and direct. Lead with the answer or action, not the reasoning. Skip filler words, preamble, and unnecessary transitions. Do not restate what the user said — just do it. When explaining, include only what is necessary for the user to understand.
+
+Focus text output on:
+- Decisions that need the user's input
+- High-level status updates at natural milestones
+- Errors or blockers that change the plan
+
+If you can say it in one sentence, don't use three. Prefer short, direct sentences over long explanations. This does not apply to code or tool calls.`
 }
 
-function getEnvInfoSection(config: EngineSessionConfig): string {
-  return [
-    '# Environment',
-    `Working directory: ${config.cwd}`,
+async function getEnvInfoSection(config: EngineSessionConfig): Promise<string> {
+  const isGit = await getIsGit(config.cwd)
+  const unameSR = getUnameSR()
+  const appState = config.ports.hostStatePort.getAppState()
+  const additionalWorkingDirectories = getAdditionalWorkingDirectories(
+    appState.toolPermissionContext.additionalWorkingDirectories,
+  )
+  const suppressModelDetails = shouldSuppressModelDetailsForUndercover(
+    appState.repo.repoClass,
+  )
+
+  let modelDescription: string | null = null
+  if (!suppressModelDetails) {
+    const marketingName = getMarketingNameForModel(
+      config.mainLoopModel,
+      config.modelProvider,
+    )
+    modelDescription = marketingName
+      ? `You are powered by the model named ${marketingName}. The exact model ID is ${config.mainLoopModel}.`
+      : `You are powered by the model ${config.mainLoopModel}.`
+  }
+
+  const knowledgeCutoff = getKnowledgeCutoff(config.mainLoopModel)
+  const knowledgeCutoffMessage = knowledgeCutoff
+    ? `Assistant knowledge cutoff is ${knowledgeCutoff}.`
+    : null
+
+  const envItems = [
+    `Primary working directory: ${config.cwd}`,
+    isWorktreeSession(appState.worktree.currentSession)
+      ? 'This is a git worktree — an isolated copy of the repository. Run all commands from this directory. Do NOT `cd` to the original repository root.'
+      : null,
+    [`Is a git repository: ${isGit}`],
+    additionalWorkingDirectories.length > 0
+      ? 'Additional working directories:'
+      : null,
+    additionalWorkingDirectories.length > 0
+      ? additionalWorkingDirectories
+      : null,
     `Platform: ${process.platform}`,
-    `OS Version: ${os.release()}`,
-    `Main loop model: ${config.mainLoopModel}`,
-  ].join('\n')
+    getShellInfoLine(),
+    `OS Version: ${unameSR}`,
+    modelDescription,
+    knowledgeCutoffMessage,
+    suppressModelDetails ? null : getLatestModelFamilyLine(),
+    suppressModelDetails ? null : getClaudeCodeAvailabilityLine(),
+    suppressModelDetails ? null : getFastModeLine(),
+  ].filter((item): item is string | string[] => item !== null)
+
+  return [
+    `# Environment`,
+    `You have been invoked in the following environment: `,
+    ...prependBullets(envItems),
+  ].join(`\n`)
 }
 
 function getMcpInstructionsSection(config: EngineSessionConfig): string | null {
-  const clients = config.ports.mcpRuntimePort.listClients()
-  if (clients.length === 0) {
+  const connectedClients = config.ports.mcpRuntimePort
+    .listClients()
+    .filter(
+      (client): client is import('../types/public.js').ConnectedMCPServer =>
+        client.type === 'connected',
+    )
+
+  const clientsWithInstructions = connectedClients.filter(
+    client => client.instructions,
+  )
+
+  if (clientsWithInstructions.length === 0) {
     return null
   }
 
-  return [
-    '# MCP Server Instructions',
-    'The following MCP servers are currently connected in this session:',
-    ...clients.map(client => `- ${client.name}`),
-  ].join('\n')
+  const instructionBlocks = clientsWithInstructions
+    .map(client => {
+      return `## ${client.name}
+${client.instructions}`
+    })
+    .join('\n\n')
+
+  return `# MCP Server Instructions
+
+The following MCP servers have provided instructions for how to use their tools and resources:
+
+${instructionBlocks}`
 }
 
-function getSessionSpecificGuidanceSection(config: EngineSessionConfig): string {
-  const clients = config.ports.mcpRuntimePort.listClients()
-  return [
-    '# Session-specific guidance',
-    '- Custom system prompt replaces the default prompt body when provided.',
-    '- Append system prompt is always added at the end of the effective system prompt.',
-    clients.length > 0
-      ? '- MCP-connected capabilities may appear in both tool visibility and prompt guidance.'
-      : '- No MCP-connected capabilities are currently attached to this session.',
-  ].join('\n')
+const DISCOVER_SKILLS_TOOL_NAME = 'DiscoverSkills'
+const EXPLORE_AGENT_MIN_QUERIES = 3
+const EXPLORE_AGENT_TYPE = 'Explore'
+const VERIFICATION_AGENT_TYPE = 'verification'
+
+function getIsNonInteractiveSession(config: EngineSessionConfig): boolean {
+  return !config.ports.hostStatePort.getAppState().ui.isInteractive
+}
+
+function isForkSubagentEnabled(
+  appState: ReturnType<EngineSessionConfig['ports']['hostStatePort']['getAppState']>,
+): boolean {
+  return appState.promptFeatures.forkSubagentEnabled
+}
+
+function areExplorePlanAgentsEnabled(
+  appState: ReturnType<EngineSessionConfig['ports']['hostStatePort']['getAppState']>,
+): boolean {
+  return appState.promptFeatures.explorePlanAgentsEnabled
+}
+
+function isVerificationAgentEnabled(
+  appState: ReturnType<EngineSessionConfig['ports']['hostStatePort']['getAppState']>,
+): boolean {
+  return appState.promptFeatures.verificationAgentEnabled
+}
+
+function getAgentToolSection(
+  appState: ReturnType<EngineSessionConfig['ports']['hostStatePort']['getAppState']>,
+): string {
+  return isForkSubagentEnabled(appState)
+    ? `Calling ${AGENT_TOOL_NAME} without a subagent_type creates a fork, which runs in the background and keeps its tool output out of your context — so you can keep chatting with the user while it works. Reach for it when research or multi-step implementation work would otherwise fill your context with raw output you won't need again. **If you ARE the fork** — execute directly; do not re-delegate.`
+    : `Use the ${AGENT_TOOL_NAME} tool with specialized agents when the task at hand matches the agent's description. Subagents are valuable for parallelizing independent queries or for protecting the main context window from excessive results, but they should not be used excessively when not needed. Importantly, avoid duplicating work that subagents are already doing - if you delegate research to a subagent, do not also perform the same searches yourself.`
+}
+
+function getDiscoverSkillsGuidance(): string {
+  return `Relevant skills are automatically surfaced each turn as "Skills relevant to your task:" reminders. If you're about to do something those don't cover — a mid-task pivot, an unusual workflow, a multi-step plan — call ${DISCOVER_SKILLS_TOOL_NAME} with a specific description of what you're doing. Skills already visible or loaded are filtered automatically. Skip this if the surfaced skills already cover your next action.`
+}
+
+function getSessionSpecificGuidanceSection(
+  config: EngineSessionConfig,
+  enabledTools: Set<string>,
+  skillToolCommands: ReturnType<typeof listSkillsForSession>,
+): string | null {
+  const appState = config.ports.hostStatePort.getAppState()
+  const hasAskUserQuestionTool = enabledTools.has(ASK_USER_QUESTION_TOOL_NAME)
+  const hasSkills =
+    skillToolCommands.length > 0 && enabledTools.has(SKILL_TOOL_NAME)
+  const hasAgentTool = enabledTools.has(AGENT_TOOL_NAME)
+  const searchTools = hasEmbeddedSearchTools()
+    ? `\`find\` or \`grep\` via the ${BASH_TOOL_NAME} tool`
+    : `the ${GLOB_TOOL_NAME} or ${GREP_TOOL_NAME}`
+
+  const items = [
+    hasAskUserQuestionTool
+      ? `If you do not understand why the user has denied a tool call, use the ${ASK_USER_QUESTION_TOOL_NAME} to ask them.`
+      : null,
+    getIsNonInteractiveSession(config)
+      ? null
+      : `If you need the user to run a shell command themselves (e.g., an interactive login like \`gcloud auth login\`), suggest they type \`! <command>\` in the prompt — the \`!\` prefix runs the command in this session so its output lands directly in the conversation.`,
+    hasAgentTool ? getAgentToolSection(appState) : null,
+    ...(hasAgentTool &&
+    areExplorePlanAgentsEnabled(appState) &&
+    !isForkSubagentEnabled(appState)
+      ? [
+          `For simple, directed codebase searches (e.g. for a specific file/class/function) use ${searchTools} directly.`,
+          `For broader codebase exploration and deep research, use the ${AGENT_TOOL_NAME} tool with subagent_type=${EXPLORE_AGENT_TYPE}. This is slower than using ${searchTools} directly, so use this only when a simple, directed search proves to be insufficient or when your task will clearly require more than ${EXPLORE_AGENT_MIN_QUERIES} queries.`,
+        ]
+      : []),
+    hasSkills
+      ? `/<skill-name> (e.g., /commit) is shorthand for users to invoke a user-invocable skill. When executed, the skill gets expanded to a full prompt. Use the ${SKILL_TOOL_NAME} tool to execute them. IMPORTANT: Only use ${SKILL_TOOL_NAME} for skills listed in its user-invocable skills section - do not guess or use built-in CLI commands.`
+      : null,
+    DISCOVER_SKILLS_TOOL_NAME !== null &&
+    appState.promptFeatures.discoverSkillsEnabled &&
+    hasSkills &&
+    enabledTools.has(DISCOVER_SKILLS_TOOL_NAME)
+      ? getDiscoverSkillsGuidance()
+      : null,
+    hasAgentTool && isVerificationAgentEnabled(appState)
+      ? `The contract: when non-trivial implementation happens on your turn, independent adversarial verification must happen before you report completion — regardless of who did the implementing (you directly, a fork you spawned, or a subagent). You are the one reporting to the user; you own the gate. Non-trivial means: 3+ file edits, backend/API changes, or infrastructure changes. Spawn the ${AGENT_TOOL_NAME} tool with subagent_type="${VERIFICATION_AGENT_TYPE}". Your own checks, caveats, and a fork's self-checks do NOT substitute — only the verifier assigns a verdict; you cannot self-assign PARTIAL. Pass the original user request, all files changed (by anyone), the approach, and the plan file path if applicable. Flag concerns if you have them but do NOT share test results or claim things work. On FAIL: fix, resume the verifier with its findings plus your fix, repeat until PASS. On PASS: spot-check it — re-run 2-3 commands from its report, confirm every PASS has a Command run block with output that matches your re-run. If any PASS lacks a command block or diverges, resume the verifier with the specifics. On PARTIAL (from the verifier): report what passed and what could not be verified.`
+      : null,
+  ].filter((item): item is string => item !== null)
+
+  if (items.length === 0) return null
+  return ['# Session-specific guidance', ...prependBullets(items)].join('\n')
 }
 
 export async function getDefaultSystemPromptSections(
   config: EngineSessionConfig,
 ): Promise<Record<string, string>> {
-  const builtinTools = getToolSchemas(getBuiltinTools())
-  const memorySection = await loadPromptMemory()
-  const mcpInstructions = getMcpInstructionsSection(config)
-
-  return {
-    intro: getIntroSection(config),
-    system: getSystemSection(),
-    doingTasks: getDoingTasksSection(),
-    actions: getActionsSection(),
-    usingYourTools: getUsingYourToolsSection(config, builtinTools),
-    toneAndStyle: getToneAndStyleSection(),
-    outputEfficiency: getOutputEfficiencySection(),
-    envInfo: getEnvInfoSection(config),
-    sessionSpecificGuidance: getSessionSpecificGuidanceSection(config),
-    ...(memorySection ? { memory: memorySection } : {}),
-    ...(mcpInstructions ? { mcpInstructions } : {}),
-  }
+  return getSectionRecordForPrompt(config)
 }
 
 export async function buildDefaultSystemPrompt(
   config: EngineSessionConfig,
 ): Promise<SystemPrompt> {
-  return asSystemPrompt(
-    Object.values(await getDefaultSystemPromptSections(config)),
+  return getDefaultPromptFromSections(
+    await getDefaultSystemPromptSections(config),
   )
+}
+
+function getAgentSystemPrompt(
+  mainThreadAgentDefinition: import('../types/public.js').AgentDefinition | undefined,
+): string | undefined {
+  if (!mainThreadAgentDefinition) {
+    return undefined
+  }
+
+  return mainThreadAgentDefinition.systemPrompt
 }
 
 export function buildEffectiveSystemPrompt(options: {
@@ -255,15 +791,41 @@ export function buildEffectiveSystemPrompt(options: {
   customSystemPrompt?: string
   appendSystemPrompt?: string
   overrideSystemPrompt?: string | null
-  agentSystemPrompt?: string
+  mainThreadAgentDefinition?: import('../types/public.js').AgentDefinition
+  coordinatorSystemPrompt?: string
+  coordinatorModeEnabled?: boolean
+  proactiveEnabled?: boolean
 }): SystemPrompt {
   if (options.overrideSystemPrompt) {
     return asSystemPrompt([options.overrideSystemPrompt])
   }
 
+  if (
+    options.coordinatorModeEnabled &&
+    !options.mainThreadAgentDefinition &&
+    options.coordinatorSystemPrompt
+  ) {
+    return asSystemPrompt([
+      options.coordinatorSystemPrompt,
+      ...(options.appendSystemPrompt ? [options.appendSystemPrompt] : []),
+    ])
+  }
+
+  const agentSystemPrompt = getAgentSystemPrompt(
+    options.mainThreadAgentDefinition,
+  )
+
+  if (agentSystemPrompt && options.proactiveEnabled) {
+    return asSystemPrompt([
+      ...options.defaultSystemPrompt,
+      `\n# Custom Agent Instructions\n${agentSystemPrompt}`,
+      ...(options.appendSystemPrompt ? [options.appendSystemPrompt] : []),
+    ])
+  }
+
   return asSystemPrompt([
-    ...(options.agentSystemPrompt
-      ? [options.agentSystemPrompt]
+    ...(agentSystemPrompt
+      ? [agentSystemPrompt]
       : options.customSystemPrompt !== undefined
         ? [options.customSystemPrompt]
         : options.defaultSystemPrompt),

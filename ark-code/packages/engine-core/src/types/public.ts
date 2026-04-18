@@ -27,13 +27,40 @@ export type AgentDefinition = {
   name: string
   description: string
   mode: 'foreground' | 'background'
+  agentType?: string
+  isBuiltIn?: boolean
+  memory?: string
   systemPrompt?: string
 }
 
-export type MCPServerConnection = {
-  name: string
-  status: 'connected' | 'disconnected'
+export type CoordinatorContract = {
+  enabled: boolean
+  systemPrompt?: string
 }
+
+export type EffectivePromptFeatures = {
+  coordinatorModeEnabled: boolean
+  proactiveEnabled: boolean
+}
+
+export type EffectivePromptContext = {
+  mainThreadAgentDefinition?: AgentDefinition
+  coordinator?: CoordinatorContract
+  features?: EffectivePromptFeatures
+}
+
+export type ConnectedMCPServer = {
+  name: string
+  type: 'connected'
+  instructions?: string
+}
+
+export type DisconnectedMCPServer = {
+  name: string
+  type: 'disconnected'
+}
+
+export type MCPServerConnection = ConnectedMCPServer | DisconnectedMCPServer
 
 export type ServerResource = {
   uri: string
@@ -154,9 +181,11 @@ export type EngineSessionConfig = {
   sessionId: string
   cwd: string
   mainLoopModel: string
+  modelProvider?: 'firstParty' | 'foundry'
   customSystemPrompt?: string
   appendSystemPrompt?: string
   initialMessages?: EngineMessage[]
+  effectivePromptContext?: EffectivePromptContext
   ports: EnginePorts
 }
 

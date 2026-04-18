@@ -1,5 +1,7 @@
-import type { AgentDefinition } from '../../types/public.js'
+export type SkillCommand = {
+  name: string
+}
 
-export function listSkillsForSession(): AgentDefinition[] {
-  return []
+export function listSkillsForSession(commands: SkillCommand[]): SkillCommand[] {
+  return commands
 }

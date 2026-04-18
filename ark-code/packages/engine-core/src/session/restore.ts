@@ -2,6 +2,8 @@ import type { EngineSessionConfig, EngineSessionSnapshot } from '../types/public
 import { createEngineSession } from './engine-factory.js'
 
 export function restoreSessionFromSnapshot(snapshot: EngineSessionSnapshot, config: EngineSessionConfig) {
+  config.ports.hostStatePort.setAppState(() => snapshot.state.hostState)
+
   return createEngineSession({
     ...config,
     sessionId: snapshot.sessionId,

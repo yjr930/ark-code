@@ -13,7 +13,11 @@ export function detachMcpClient(_session: EngineSession, _clientName: string): v
 }
 
 export function listMcpClients(session: EngineSession): MCPServerConnection[] {
-  return getHostState(session).mcp.clients.map(client => ({ name: client.name, status: 'connected' as const }))
+  return getHostState(session).mcp.clients.map(client => ({
+    name: client.name,
+    type: 'connected' as const,
+    instructions: client.instructions,
+  }))
 }
 
 export function listMcpResources(_session: EngineSession): Record<string, ServerResource[]> {
