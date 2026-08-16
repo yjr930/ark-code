@@ -6,6 +6,10 @@ dist/
 lib/
 out/
 build/
+src-gen/
+.browser_modules/
+esbuild.mjs
+gen-esbuild.*.mjs
 
 # 测试与运行产物
 coverage/
@@ -20,6 +24,7 @@ temp/
 # 日志
 *.log
 logs/
+*.tsbuildinfo
 
 # 环境变量与密钥
 .env

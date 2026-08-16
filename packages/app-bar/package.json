@@ -1,0 +1,26 @@
+{
+  "name": "@arkcode/app-bar",
+  "version": "0.0.0",
+  "private": true,
+  "main": "lib/browser/app-bar-frontend-module.js",
+  "types": "lib/browser/index.d.ts",
+  "theiaExtensions": [
+    {
+      "frontend": "lib/browser/app-bar-frontend-module"
+    }
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "watch": "tsc -b -w",
+    "clean": "tsc -b --clean"
+  },
+  "dependencies": {
+    "@theia/core": "1.74.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@types/node": "24",
+    "typescript": "~5.9.3"
+  }
+}
