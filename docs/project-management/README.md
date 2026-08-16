@@ -7,9 +7,15 @@
 
 ## 开发测试环境
 
-项目当前阶段主要涉及 service 和 web client。service 优先运行在 Linux 环境。
+项目当前阶段以桌面端为主，初步阶段先不开发 Web UI。
 
-service 和 web 的开发使用 WSL。
+桌面端需要同时支持 Windows 和 macOS，优先验证 Windows 环境。
+
+共享代码的开发和检查可以在 WSL 中进行。
+
+Windows 桌面端的构建和验证必须在本机 Windows 环境中进行。
+
+macOS 桌面端的构建和验证必须在本机 macOS 环境中进行。
 
 ## 核心上游依赖管理
 
