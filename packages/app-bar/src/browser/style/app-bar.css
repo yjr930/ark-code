@@ -6,6 +6,11 @@
   flex: 1;
   background: transparent;
   color: var(--theia-titleBar-activeForeground);
+  -webkit-app-region: no-drag;
+}
+
+#arkcode-app-bar * {
+  -webkit-app-region: no-drag;
 }
 
 #arkcode-app-bar .arkcode-app-bar-content {
