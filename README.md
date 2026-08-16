@@ -1,11 +1,7 @@
-# ark-code
+# Ark-Code
 
-本项目是一个基于 Eclipse Theia Platform 构建的 IDE 项目，AI 能力以开源 pi agent 作为底层引擎。项目当前以 Web 端优先，服务端优先运行在 Linux 环境。
+本项目构建一个基于 Eclipse Theia Platform 的 IDE，并使用开源 pi agent 作为 AI 底层引擎。
 
 ## 文档
 
 - [项目管理规范](docs/project-management/README.md)
-
-## 状态
-
-仓库当前处于初始化阶段。
