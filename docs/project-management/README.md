@@ -1,9 +1,10 @@
 # 项目管理规范
 
-本目录保存 ark-code 项目的项目管理规范。所有进入版本仓库的正式文件都应遵守这里的规则。
+本目录保存 ark-code 项目的项目管理规范。本目录只包含项目仓库内的版本化规范，不包含代理行为规则或本机工作区约定。
 
 | 文档 | 内容 |
 |---|---|
+| [00-core-principles.md](00-core-principles.md) | 项目核心准则 |
 | [01-repository-and-directory.md](01-repository-and-directory.md) | 仓库、目录、分支与提交规范 |
 | [02-development-environment.md](02-development-environment.md) | Linux、WSL 与 Web 优先的开发环境规范 |
 | [03-theia-upstream.md](03-theia-upstream.md) | 与 Theia 及 pi 上游代码的关联方式 |
