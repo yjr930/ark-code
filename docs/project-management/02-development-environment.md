@@ -7,7 +7,7 @@
 
 ## 本地开发环境
 
-本地开发优先使用 WSL，目录收敛在本工作目录。Windows 路径 `D:\workspace\arkcode\app` 在 WSL 内对应 `/mnt/d/workspace/arkcode/app`。
+本地开发优先使用 WSL，目录收敛在工作区根目录。WSL 会把 Windows 盘符 `X:` 挂载为 `/mnt/x`，因此本机路径的具体映射根据实际盘符和目录确定，不在文档中写死。
 
 ## WSL 安装与检查
 
@@ -27,10 +27,10 @@
 
 ## 目录映射
 
-| Windows 路径 | WSL 路径 |
+| 对象 | 说明 |
 |---|---|
-| `D:\workspace\arkcode\app` | `/mnt/d/workspace/arkcode/app` |
-| `D:\workspace\arkcode\research` | `/mnt/d/workspace/arkcode/research` |
+| 仓库根目录 | 在 WSL 中通过对应挂载路径访问，具体以本机为准 |
+| 工作区根目录 | 仓库根目录的上一级目录，在 WSL 中通过对应挂载路径访问 |
 
 ## 启动流程
 

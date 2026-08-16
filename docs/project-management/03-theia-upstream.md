@@ -14,15 +14,15 @@ pi 也采用同样原则：通过 npm 包使用 `earendil-works/pi` 的发布版
 
 ## 上游参考代码
 
-需要阅读或对比 Theia 上游源码时，把上游仓库克隆到仓库外的参考目录，例如 `D:\workspace\arkcode\research\theia-upstream`。参考目录不进入本项目 Git。
+需要阅读或对比 Theia 上游源码时，把上游仓库克隆到仓库外的参考目录，例如 `../research/theia-upstream`（相对仓库根目录）。参考目录不进入本项目 Git。
 
 命令示例：
 
 ```text
-git clone https://github.com/eclipse-theia/theia.git research/theia-upstream
+git clone https://github.com/eclipse-theia/theia.git ../research/theia-upstream
 ```
 
-pi 的参考目录可以放在 `D:\workspace\arkcode\research\pi-upstream`。
+pi 的参考目录可以放在 `../research/pi-upstream`（相对仓库根目录）。
 
 ## 发布节奏对齐
 
