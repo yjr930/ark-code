@@ -22,19 +22,19 @@
 5. 使用 `npm run build:browser` 构建浏览器示例。
 6. 使用 `npm run start -- --hostname=0.0.0.0` 启动服务。
 7. 在 Windows 用户目录创建 `.wslconfig`，设置 `networkingMode=mirrored`，并执行 `wsl --shutdown` 后重新启动 WSL。
-8. 通过 Windows 访问 `http://192.168.31.48:3000/`，返回 HTTP 200。
+8. 通过 Windows 访问 `http://127.0.0.1:3000/`，返回 HTTP 200。
 
 ## 结果
 
 - Theia service 监听 `0.0.0.0:3000`。
 - WSL 内访问正常。
-- Windows 通过本机局域网地址 `192.168.31.48:3000` 访问正常。
+- Windows 通过 `http://127.0.0.1:3000/` 访问正常。
 
 ## 问题与决策
 
 - 在 `/mnt/d` 下克隆 Theia 时出现 chmod 权限错误，因此把 Theia 代码放在 WSL 用户目录 `~/theia`。
 - Puppeteer 安装时下载浏览器失败，通过环境变量跳过浏览器下载。
-- Windows 无法通过 `127.0.0.1:3000` 访问，使用 WSL 的镜像网络模式后，通过本机局域网地址访问成功。
+- Windows 浏览器访问时可能受系统代理影响，关闭针对 localhost 的代理后可以访问；局域网地址连接超时，最终使用 localhost。
 
 ## 后续行动
 
