@@ -13,6 +13,14 @@
   -webkit-app-region: no-drag;
 }
 
+#theia-drag-panel {
+  pointer-events: none;
+}
+
+#theia-top-panel {
+  -webkit-app-region: drag;
+}
+
 #arkcode-app-bar .arkcode-app-bar-content {
   display: flex;
   align-items: center;
