@@ -1,4 +1,5 @@
 import { ApplicationShell, Layout, TheiaSplitPanel } from '@theia/core/lib/browser';
+import { Panel } from '@theia/core/shared/@lumino/widgets';
 import { inject, injectable, interfaces, postConstruct } from '@theia/core/shared/inversify';
 import { AppBarWidget, AppBarWidgetFactory } from './app-bar-widget';
 import { AppBarService } from './app-bar-service';
@@ -17,12 +18,17 @@ export class ApplicationShellWithAppBar extends ApplicationShell {
 
     protected appBar: AppBarWidget;
     protected panelForSideAreas: TheiaSplitPanel;
+    protected editorMenuPanel: Panel;
 
     @postConstruct()
     protected override init(): void {
         this.appBar = this.appBarFactory();
         this.appBar.id = AppBarWidget.ID;
+        this.editorMenuPanel = new Panel();
+        this.editorMenuPanel.id = 'arkcode-editor-menu-panel';
+        this.editorMenuPanel.addClass('arkcode-editor-menu-panel');
         super.init();
+        this.topPanel.addWidget(this.appBar);
         this.updateAppAreaVisibility(this.appBarService.currentApp);
         this.appBarService.onDidChangeCurrentApp(app => this.updateAppAreaVisibility(app));
         this.appBar.update();
@@ -48,7 +54,7 @@ export class ApplicationShellWithAppBar extends ApplicationShell {
         this.panelForSideAreas = panelForSideAreas;
 
         return this.createBoxLayout(
-            [this.topPanel, this.appBar, this.appHostWidget, panelForSideAreas, this.statusBar],
+            [this.topPanel, this.editorMenuPanel, this.appHostWidget, panelForSideAreas, this.statusBar],
             [0, 0, 1, 1, 0],
             { direction: 'top-to-bottom', spacing: 0 }
         );
@@ -56,8 +62,13 @@ export class ApplicationShellWithAppBar extends ApplicationShell {
 
     protected updateAppAreaVisibility(app: { area?: 'shell' | 'full' } | undefined): void {
         const showOriginalShell = !app || app.area === 'shell';
+        this.editorMenuPanel.setHidden(!showOriginalShell);
         this.appHostWidget.setHidden(showOriginalShell);
         this.panelForSideAreas.setHidden(!showOriginalShell);
+    }
+
+    getEditorMenuPanel(): Panel {
+        return this.editorMenuPanel;
     }
 }
 

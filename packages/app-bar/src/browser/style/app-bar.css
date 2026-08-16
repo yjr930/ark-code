@@ -3,9 +3,9 @@
   display: flex;
   align-items: center;
   padding: 0 6px;
-  border-bottom: 1px solid var(--theia-tabbar-border);
-  background: var(--theia-tabbar-background);
-  color: var(--theia-tabbar-inactiveForeground);
+  flex: 1;
+  background: transparent;
+  color: var(--theia-titleBar-activeForeground);
 }
 
 #arkcode-app-bar .arkcode-app-bar-content {
@@ -62,4 +62,12 @@
 
 .arkcode-app-host .arkcode-app-host-placeholder p {
   color: var(--theia-descriptionForeground);
+}
+
+#arkcode-editor-menu-panel {
+  display: flex;
+  min-height: var(--theia-private-menubar-height);
+  border-bottom: 1px solid var(--theia-titleBar-border);
+  background: var(--theia-titleBar-activeBackground);
+  color: var(--theia-titleBar-activeForeground);
 }

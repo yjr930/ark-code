@@ -1,5 +1,5 @@
 import { bindRootContributionProvider } from '@theia/core';
-import { ApplicationShell } from '@theia/core/lib/browser';
+import { ApplicationShell, FrontendApplicationContribution } from '@theia/core/lib/browser';
 import { ContainerModule, interfaces } from '@theia/core/shared/inversify';
 import { AppBarWidget, AppBarWidgetFactory } from './app-bar-widget';
 import { AppContribution } from './app-bar-contribution';
@@ -7,6 +7,7 @@ import { AiChatApp, BrowserApp, EditorApp, GitApp, TerminalApp } from './builtin
 import { bindAppBarApplicationShell } from './application-shell-with-app-bar';
 import { AppBarService } from './app-bar-service';
 import { AppHostWidget } from './app-host-widget';
+import { AppLayoutContribution } from './app-layout-contribution';
 import '../../src/browser/style/app-bar.css';
 
 export default new ContainerModule((
@@ -19,6 +20,8 @@ export default new ContainerModule((
     bind(AppBarWidgetFactory).toFactory(({ container }) => (): AppBarWidget => container.get(AppBarWidget));
     bind(AppBarService).toSelf().inSingletonScope();
     bind(AppHostWidget).toSelf().inSingletonScope();
+    bind(AppLayoutContribution).toSelf().inSingletonScope();
+    bind(FrontendApplicationContribution).toService(AppLayoutContribution);
     bindRootContributionProvider(bind, AppContribution);
 
     bind(AppContribution).to(EditorApp).inSingletonScope();
